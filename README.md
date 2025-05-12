@@ -20,6 +20,7 @@ The application is structured with the following components:
 - **Business Transactions**: Each user flow is tracked as a business transaction
 - **Component Rendering Metrics**: Each component tracks its render time
 - **API Call Tracking**: All API calls are tracked with timing information
+- **User Activity Monitoring**: Automatic tracking of user interactions and session activity
 
 ## Running the Application
 
@@ -35,132 +36,466 @@ The application is structured with the following components:
 
 3. Open the application at [http://localhost:3000](http://localhost:3000)
 
-## OpenTelemetry Collector Setup
+## OpenTelemetry Backend Setup
 
-To visualize the OpenTelemetry traces, you need to set up an OpenTelemetry Collector. 
+To visualize the OpenTelemetry traces, we use Grafana Tempo as the distributed tracing backend, along with the OpenTelemetry Collector.
 
-### Option 1: Using Jaeger All-in-One
+### Using Tempo and Grafana with Docker Compose
 
-1. Run Jaeger via Docker:
-
-```bash
-docker run -d --name jaeger \
-  -e COLLECTOR_ZIPKIN_HOST_PORT=:9411 \
-  -p 5775:5775/udp \
-  -p 6831:6831/udp \
-  -p 6832:6832/udp \
-  -p 5778:5778 \
-  -p 16686:16686 \
-  -p 14250:14250 \
-  -p 14268:14268 \
-  -p 14269:14269 \
-  -p 9411:9411 \
-  -p 4317:4317 \
-  -p 4318:4318 \
-  jaegertracing/all-in-one:latest
-```
-
-2. Access the Jaeger UI at [http://localhost:16686](http://localhost:16686)
-
-### Option 2: Using OpenTelemetry Collector with Docker Compose
-
-Create a `docker-compose.yml` file:
-
-```yaml
-version: '3'
-services:
-  # Jaeger
-  jaeger:
-    image: jaegertracing/all-in-one:latest
-    ports:
-      - "16686:16686" # Jaeger UI
-      - "14250:14250" # Model
-      - "14268:14268" # Collector HTTP
-    environment:
-      - COLLECTOR_OTLP_ENABLED=true
-
-  # OpenTelemetry Collector
-  otel-collector:
-    image: otel/opentelemetry-collector:latest
-    command: ["--config=/etc/otel-collector-config.yaml"]
-    volumes:
-      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
-    ports:
-      - "4318:4318" # OTLP HTTP Receiver
-      - "8889:8889" # Prometheus exporter
-    depends_on:
-      - jaeger
-```
-
-Create `otel-collector-config.yaml`:
-
-```yaml
-receivers:
-  otlp:
-    protocols:
-      http:
-        cors:
-          allowed_origins:
-            - http://localhost:3000
-            - http://localhost:*
-            - "*"
-
-processors:
-  batch:
-    timeout: 1s
-
-exporters:
-  jaeger:
-    endpoint: jaeger:14250
-    tls:
-      insecure: true
-
-  logging:
-    verbosity: detailed
-
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [jaeger, logging]
-```
-
-Then run:
+We've provided a pre-configured setup using Docker Compose:
 
 ```bash
 docker-compose up -d
 ```
 
-## Business Transactions
+This command starts:
+- **OpenTelemetry Collector**: Receives and processes telemetry data
+- **Tempo**: Stores and indexes distributed traces
+- **Grafana**: Web interface for visualizing traces
 
-### 1. Product Browsing & Cart Management
-This business transaction tracks:
-- Product list loading time
-- Product detail view time
-- Add to cart actions
-- Cart view and management
+Access the Grafana UI at [http://localhost:3001](http://localhost:3001)
 
-### 2. Checkout Process
-This business transaction tracks:
-- Form validation time
-- Payment processing time
-- Order confirmation
+The Tempo data source is pre-configured in Grafana, so you can immediately start exploring traces.
+
+## Implementing Business Flow Tracing
+
+This application demonstrates advanced business flow tracing techniques. Here's how our key flows are implemented in detail:
+
+### Understanding the Span Hierarchy
+
+Our tracing implementation follows a three-layer hierarchy:
+
+1. **Flow Spans**: Root spans representing complete business processes (shopping, checkout)
+2. **UI/Component Spans**: Children of flow spans that represent UI rendering and component lifecycles
+3. **Operation Spans**: Granular spans for specific operations (API calls, user interactions)
+
+### 1. Add to Cart Flow Implementation
+
+The Add to Cart flow begins in `ProductListPage.tsx` and spans multiple components:
+
+```typescript
+// In ProductListPage.tsx - Initialize the flow span at the start of user journey
+useEffect(() => {
+  // Create a root span for the shopping flow with its own trace ID
+  startSpan(SPANS.FLOW.SHOPPING_FLOW.NAME, SPANS.FLOW.SHOPPING_FLOW.ID, {
+    'flow.start_page': 'ProductList',
+    'flow.timestamp': Date.now()
+  });
+  
+  // Set up continuous user activity tracking within this flow
+  activityTrackerRef.current = trackUserActivity(
+    SPANS.FLOW.SHOPPING_FLOW.ID,
+    30000, 
+    () => ({
+      'page.name': 'ProductListPage',
+      'products.count': products.length
+    })
+  );
+  
+  activityTrackerRef.current.startTracking();
+  
+  // Clean up spans and tracking on component unmount
+  return () => {
+    if (activityTrackerRef.current) {
+      activityTrackerRef.current.stopTracking();
+    }
+    
+    // Properly end child spans first
+    spanIdsToCheck.forEach(id => {
+      if (getSpan(id)) {
+        addSpanEvent(id, SPANS.EVENTS.USER_INTERACTION, {
+          'unmount.timestamp': Date.now(),
+          'unmount.reason': 'component_cleanup'
+        });
+        endSpan(id);
+      }
+    });
+  };
+}, []);
+```
+
+When a user adds a product to cart, we create operation spans as children:
+
+```typescript
+// Creating a UI interaction span as child of the flow span
+const handleAddToCart = useCallback((product: Product) => {
+  // Record detailed user activity
+  if (activityTrackerRef.current) {
+    activityTrackerRef.current.recordAction('ProductAddedToCart', {
+      'product.id': product.id,
+      'product.title': product.title
+    });
+  }
+
+  // Create a UI interaction span as a child of the shopping flow
+  startUiSpan(
+    SPANS.INTERACTION.ADD_TO_CART.NAME,
+    SPANS.FLOW.SHOPPING_FLOW.ID,  // Parent span ID
+    SPANS.INTERACTION.ADD_TO_CART.ID,
+    {
+      'product.id': product.id,
+      'product.title': product.title,
+      'action.timestamp': Date.now()
+    }
+  );
+  
+  // Add to cart with span ID to link cart operation as a child span
+  addToCart(product, 1, SPANS.INTERACTION.ADD_TO_CART.ID);
+  
+  // Mark completion with an event
+  addSpanEvent(SPANS.INTERACTION.ADD_TO_CART.ID, SPANS.EVENTS.USER_INTERACTION, {
+    'interaction.type': 'add_to_cart_complete'
+  });
+  
+  // End the operation span but leave the flow span active
+  endSpan(SPANS.INTERACTION.ADD_TO_CART.ID);
+}, []);
+```
+
+The flow span continues until the user navigates to the cart, where we explicitly end it:
+
+```typescript
+// In CartPage.tsx - End the shopping flow and start checkout flow
+useEffect(() => {
+  // Record completion event before ending the flow span
+  addSpanEvent(SPANS.FLOW.SHOPPING_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
+    'flow.end_page': 'CartPage',
+    'flow.end_timestamp': Date.now(),
+    'interaction.type': 'arrived_at_cart'
+  });
+  
+  // End shopping flow
+  endSpan(SPANS.FLOW.SHOPPING_FLOW.ID);
+  
+  // Start checkout flow - creating a new trace
+  startSpan(SPANS.FLOW.CHECKOUT_FLOW.NAME, SPANS.FLOW.CHECKOUT_FLOW.ID, {
+    'page.name': 'CartPage',
+    'cart.item_count': items.length,
+    'cart.total_amount': totalPrice,
+    'view.timestamp': Date.now()
+  });
+}, []);
+```
+
+### 2. Checkout Flow Implementation
+
+The checkout flow spans multiple components and includes form interaction tracking:
+
+```typescript
+// In CheckoutPage.tsx - Track form field changes with detailed context
+const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const { name, value } = e.target;
+  
+  // Update form interaction span with field completion metrics
+  if (getSpan(SPANS.CHECKOUT.FORM_INTERACTION.ID)) {
+    const updatedFormData = { ...formData, [name]: value };
+    const completedFields = Object.values(updatedFormData).filter(val => val.length > 0).length;
+    
+    addSpanEvent(SPANS.CHECKOUT.FORM_INTERACTION.ID, SPANS.EVENTS.USER_INTERACTION, {
+      'form.field': name,
+      'form.field_length': value.length,
+      'form.fields_completed': completedFields,
+      'form.completion_percentage': Math.round((completedFields / 9) * 100),
+      'ui.interaction': 'input_change',
+      'interaction.timestamp': Date.now()
+    });
+  }
+  
+  // Record detailed user activity for analysis
+  if (activityTrackerRef.current) {
+    activityTrackerRef.current.recordAction('FormFieldInput', {
+      'field.name': name,
+      'field.length': value.length
+    });
+  }
+  
+  setFormData(prev => ({ ...prev, [name]: value }));
+};
+```
+
+Payment processing creates a detailed trace with multiple timestamped events:
+
+```typescript
+// Create payment processing span with meaningful attributes
+const paymentSpan = startUiSpan(
+  SPANS.CHECKOUT.PAYMENT_PROCESSING.NAME,
+  SPANS.FLOW.CHECKOUT_FLOW.ID,
+  SPANS.CHECKOUT.PAYMENT_PROCESSING.ID,
+  {
+    'payment.amount': totalPrice,
+    'payment.card_type': getCardType(formData.cardNumber),
+    'payment.processing_start': Date.now()
+  }
+);
+
+// Add sequential events with timestamps to track the payment flow
+addSpanEvent(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID, SPANS.EVENTS.USER_INTERACTION, {
+  'payment.step': 'card_verification',
+  'payment.timestamp': Date.now(),
+  'interaction.type': 'verify_card'
+});
+
+// Track detailed progress with activity recording (fills in gaps between events)
+recordSpanActivity(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID, 'verification_progress', {
+  'verification.progress': `${Math.round(elapsed / 2)}%`,
+  'verification.elapsed_ms': elapsed
+});
+```
+
+### 3. Flow Transitions
+
+The application demonstrates proper flow transitions, ending one flow and starting another:
+
+```typescript
+// End checkout flow
+endSpan(SPANS.FLOW.CHECKOUT_FLOW.ID);
+
+// Stop activity tracking from previous flow
+if (activityTrackerRef.current) {
+  activityTrackerRef.current.stopTracking();
+}
+
+// Start order flow with context carried forward
+startSpan(SPANS.FLOW.ORDER_FLOW.NAME, SPANS.FLOW.ORDER_FLOW.ID, {
+  'page.name': 'CheckoutPage',
+  'cart.item_count': items.length,
+  'cart.total_value': totalPrice,
+  'payment.result': 'approved',
+  'view.timestamp': Date.now()
+});
+
+// Begin new activity tracking for the new flow
+activityTrackerRef.current = trackUserActivity(
+  SPANS.FLOW.ORDER_FLOW.ID,
+  30000,
+  () => ({
+    'page.name': 'CheckoutPage',
+    'cart.item_count': items.length,
+    'cart.total_value': totalPrice,
+  })
+);
+activityTrackerRef.current.startTracking();
+```
+
+## Implementing Your Own Business Flows
+
+To implement business flow tracing in your application:
+
+### 1. Define Span Constants
+
+Create a structured constants file to maintain span names and IDs:
+
+```typescript
+// In spanConstants.ts
+export const SPANS = {
+  // Flow spans define complete business processes
+  FLOW: {
+    SHOPPING_FLOW: {
+      NAME: 'flow.shopping',
+      ID: 'shopping-flow-id'
+    },
+    CHECKOUT_FLOW: {
+      NAME: 'flow.checkout',
+      ID: 'checkout-flow-id'
+    }
+  },
+  
+  // UI component spans
+  UI: {
+    PRODUCT_LIST: {
+      NAME: 'ProductList.render',
+      ID: 'product-list-id'
+    }
+  },
+  
+  // Operation spans for specific actions
+  INTERACTION: {
+    ADD_TO_CART: {
+      NAME: 'interaction.addToCart',
+      ID: 'add-to-cart-id'
+    }
+  },
+  
+  // Standard event names
+  EVENTS: {
+    USER_INTERACTION: 'UserInteraction',
+    API_CALL_INITIATED: 'ApiCallInitiated',
+    API_CALL_COMPLETED: 'ApiCallCompleted'
+  }
+};
+```
+
+### 2. Create a Tracing Context Provider
+
+Make tracing functionality available throughout your application:
+
+```typescript
+// In TracingContext.tsx
+const TracingContext = createContext<TracingContextType | undefined>(undefined);
+
+export const TracingProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const contextValue = useMemo<TracingContextType>(() => ({
+    startSpan,
+    startChildSpan,
+    endSpan,
+    getSpan,
+    addSpanEvent,
+    recordSpanError,
+    startApiSpan,
+    startUiSpan,
+    recordSpanActivity
+  }), []);
+  
+  return (
+    <TracingContext.Provider value={contextValue}>
+      {children}
+    </TracingContext.Provider>
+  );
+};
+
+// Hook for components to access tracing
+export const useTracing = () => {
+  const context = useContext(TracingContext);
+  if (context === undefined) {
+    throw new Error('useTracing must be used within a TracingProvider');
+  }
+  return context;
+};
+```
+
+### 3. Implement User Activity Tracking
+
+Create a robust activity tracker to fill gaps between explicit spans and events:
+
+```typescript
+// In userActivity.ts
+export const trackUserActivity = (
+  spanId: string,
+  inactivityTimeout = 30000,
+  additionalAttributes: () => Record<string, any> = () => ({})
+) => {
+  let lastActivity = Date.now();
+  let isTracking = false;
+  
+  const startTracking = () => {
+    lastActivity = Date.now();
+    isTracking = true;
+    
+    // Add event listeners for user interactions
+    const activityEvents = [
+      'click', 'mousemove', 'keypress', 'keydown',
+      'scroll', 'touchstart', 'touchmove', 'input'
+    ];
+    
+    activityEvents.forEach(event => {
+      document.addEventListener(event, handleUserActivity, { passive: true });
+    });
+    
+    // Initialize activity tracking
+    recordSpanActivity(spanId, 'tracking_started', {
+      'tracking.start_time': lastActivity,
+      ...additionalAttributes()
+    });
+    
+    // Start heartbeat intervals
+    startHeartbeat();
+  };
+  
+  // Record specific user actions with detailed context
+  const recordAction = (action: string, attrs: Record<string, any> = {}) => {
+    const span = getSpan(spanId);
+    if (span && isTracking) {
+      addSpanEvent(spanId, `UserAction.${action}`, {
+        'action.timestamp': Date.now(),
+        'action.time_since_last': Date.now() - lastActivity,
+        ...attrs,
+        ...additionalAttributes()
+      });
+      lastActivity = Date.now();
+    }
+  };
+  
+  return {
+    startTracking,
+    stopTracking,
+    resetTimer: handleUserActivity,
+    recordAction
+  };
+};
+```
+
+### 4. Advanced Implementation Best Practices
+
+To ensure high-quality business flow tracing:
+
+1. **Maintain Span Registry**: Keep track of spans by ID to ensure proper hierarchy
+   ```typescript
+   // In tracing.ts
+   const spanRegistry = new Map<string, Span>();
+   
+   export const getSpan = (spanId: string): Span | undefined => {
+     return spanRegistry.get(spanId);
+   };
+   ```
+
+2. **Create Flow-Specific Root Spans**: Make business flows stand out in traces
+   ```typescript
+   // For flow spans, create a new root context
+   if (isFlowSpan) {
+     span = tracer.startSpan(name, { root: true });
+   }
+   ```
+
+3. **Add Meaningful Events**: Document key moments during the flow
+   ```typescript
+   addSpanEvent(SPANS.FLOW.CHECKOUT_FLOW.ID, 'ValidationPassed', {
+     'validation.success': true,
+     'validation.timestamp': Date.now()
+   });
+   ```
+
+4. **Handle Component Unmounting**: Clean up spans properly
+   ```typescript
+   useEffect(() => {
+     return () => {
+       // End any open spans when component unmounts
+       spanIdsToEnd.forEach(id => {
+         if (getSpan(id)) {
+           console.log(`Ending span: ${id} on unmount`);
+           endSpan(id);
+         }
+       });
+     };
+   }, []);
+   ```
+
+5. **Add Heartbeats**: Prevent gaps in long-running traces
+   ```typescript
+   const heartbeatTimer = setInterval(() => {
+     recordSpanActivity(spanId, 'heartbeat', {
+       'heartbeat.time': Date.now(),
+       'user.idle_for_ms': Date.now() - lastActivity
+     });
+   }, 1000);
+   ```
 
 ## OpenTelemetry Trace View
 
-With OpenTelemetry, you can identify:
-- Page load time
-- Component rendering time
-- API call durations
-- UI interaction times
-- Business transaction metrics
+With OpenTelemetry and Tempo, you can identify:
+- Page load time and component rendering metrics
+- API call durations and failures
+- UI interaction times and user activity patterns
+- Business transaction boundaries and flow transitions
+- Form completion progress and validation errors
+- Detailed user journey with timestamps
+- Periods of user inactivity and session duration
 
 ## Technologies Used
 
 - React
 - TypeScript
 - OpenTelemetry
+- Grafana Tempo
 - Tailwind CSS
 - Vite
 - React Router
