@@ -57,6 +57,151 @@ Access the Grafana UI at [http://localhost:3001](http://localhost:3001)
 
 The Tempo data source is pre-configured in Grafana, so you can immediately start exploring traces.
 
+## API Tracing with Distributed Context Propagation
+
+This application demonstrates how to implement distributed tracing across frontend and backend services using OpenTelemetry's context propagation. Here's how API calls are traced:
+
+### 1. Creating API Client with Tracing
+
+The API service layer is instrumented to propagate trace context to backend services:
+
+```typescript
+// In api.ts - Helper function to generate W3C traceparent header
+export const getTraceparentHeader = (span: Span): string => {
+  const spanContext = span.spanContext();
+  return `00-${spanContext.traceId}-${spanContext.spanId}-01`;
+};
+
+// Add traceparent header to outgoing fetch requests
+export const createFetchOptions = (span: Span | undefined, options: RequestInit = {}): RequestInit => {
+  if (!span) {
+    return options;
+  }
+  
+  // Create new headers object, preserving any existing headers
+  const headers = new Headers(options.headers);
+  headers.set('traceparent', getTraceparentHeader(span));
+  
+  return {
+    ...options,
+    headers
+  };
+};
+
+// Instrumented API call function that includes span context
+export const fetchProducts = async (span?: Span): Promise<Product[]> => {
+  const url = 'http://localhost:5229/api/products';
+  const options = createFetchOptions(span);
+  
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+  
+  return response.json();
+};
+```
+
+### 2. Creating and Using API Spans in Components
+
+API calls are wrapped in spans to track their performance and link them to business flows:
+
+```typescript
+// In ProductListPage.tsx - Creating a child span for API call
+const loadProducts = async () => {
+  try {
+    // First create UI component span
+    const uiSpan = startUiSpan(
+      SPANS.UI.PRODUCT_LIST.NAME,
+      SPANS.FLOW.SHOPPING_FLOW.ID,
+      SPANS.UI.PRODUCT_LIST.ID,
+      { 'ui.render.start': Date.now() }
+    );
+    
+    // Create child span specifically for API call
+    const apiSpan = startApiSpan(
+      SPANS.API.FETCH_PRODUCTS.NAME,
+      SPANS.UI.PRODUCT_LIST.ID, // Parent is the UI component
+      SPANS.API.FETCH_PRODUCTS.ID,
+      '/products',
+      'GET'
+    );
+    
+    // Record API call initiation event
+    addSpanEvent(SPANS.API.FETCH_PRODUCTS.ID, SPANS.EVENTS.API_CALL_INITIATED, {
+      'timestamp': Date.now()
+    });
+    
+    // Make the API call, passing the span for context propagation
+    const products = await fetchProducts(apiSpan);
+    
+    // Record successful completion
+    addSpanEvent(SPANS.API.FETCH_PRODUCTS.ID, SPANS.EVENTS.API_CALL_COMPLETED, {
+      'products.count': products.length,
+      'timestamp': Date.now()
+    });
+    
+    // End the API span
+    endSpan(SPANS.API.FETCH_PRODUCTS.ID);
+    
+    // Process data and update UI...
+  } catch (err) {
+    // Handle and record errors
+    if (getSpan(SPANS.API.FETCH_PRODUCTS.ID)) {
+      recordSpanError(SPANS.API.FETCH_PRODUCTS.ID, 'Error fetching products');
+      endSpan(SPANS.API.FETCH_PRODUCTS.ID);
+    }
+    throw err;
+  }
+};
+```
+
+### 3. Backend Service Integration
+
+For this to work with your backend API:
+
+1. Configure your backend services to extract and parse the `traceparent` header
+2. Use the extracted trace and span IDs to create child spans in your backend
+3. Ensure spans are properly ended when operations complete
+
+Example backend implementation in a .NET API (not included in this repo):
+
+```csharp
+// Extract traceparent header in middleware or controller
+string traceparent = Request.Headers["traceparent"];
+var traceContext = ParseTraceparent(traceparent);
+
+// Create a span using the extracted parent context
+using var span = _tracer.StartActiveSpan(
+    "api.GetProducts",
+    SpanKind.Server,
+    new SpanContext(
+        traceContext.TraceId,
+        SpanId.CreateRandom(),
+        ActivityTraceFlags.Recorded,
+        traceContext.TraceState
+    )
+);
+
+// Add relevant attributes
+span.SetAttribute("http.method", "GET");
+span.SetAttribute("http.route", "/api/products");
+
+// Continue with your API logic
+var products = await _productRepository.GetAllAsync();
+
+// End the span
+span.End();
+```
+
+### 4. Distributed Trace Visualization
+
+The result in Grafana Tempo will show:
+- The complete trace from frontend UI interaction to backend API and back
+- Proper parent-child relationships between spans
+- Duration of each operation for performance analysis
+- Any errors or events that occurred during the flow
+
 ## Implementing Business Flow Tracing
 
 This application demonstrates advanced business flow tracing techniques. Here's how our key flows are implemented in detail:
@@ -71,7 +216,7 @@ Our tracing implementation follows a three-layer hierarchy:
 
 ### 1. Add to Cart Flow Implementation
 
-The Add to Cart flow begins in `ProductListPage.tsx` and spans multiple components:
+The Add to Cart flow begins in `ProductListPage.tsx` and spans across multiple components. It start on product list page and ends when user is moved to cart page.
 
 ```typescript
 // In ProductListPage.tsx - Initialize the flow span at the start of user journey

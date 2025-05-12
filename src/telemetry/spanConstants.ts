@@ -83,15 +83,15 @@ export const SPANS = {
     // Flow spans that track larger user journeys
     FLOW: {
         SHOPPING_FLOW: {
-            NAME: 'flow.addToCart',
+            NAME: 'businessTransaction.addToCart',
             ID: 'add-to-cart-flow'
         },
         CHECKOUT_FLOW: {
-            NAME: 'flow.checkout',
+            NAME: 'businessTransaction.checkout',
             ID: 'checkout-flow'
         },
         ORDER_FLOW: {
-            NAME: 'flow.order',
+            NAME: 'businessTransaction.order',
             ID: 'confirmation-flow'
         }
     },
