@@ -20,8 +20,8 @@ const ProductDetailPage = () => {
     endSpan,
     addSpanEvent,
     getSpan,
-    recordSpanError  } = useTracing();
-  
+    recordSpanError } = useTracing();
+
   // Add reference for activity tracker
   const activityTrackerRef = useRef<ReturnType<typeof trackUserActivity> | null>(null);
 
@@ -38,9 +38,9 @@ const ProductDetailPage = () => {
         // Check if we have an ongoing shopping flow span from ProductListPage
         const shoppingFlowExists = getSpan(SPANS.FLOW.SHOPPING_FLOW.ID) !== undefined;
         // Start UI rendering span
-        const uiSpan = startUiSpan(
+        startUiSpan(
           SPANS.UI.PRODUCT_DETAIL.NAME,
-          SPANS.FLOW.SHOPPING_FLOW.ID, 
+          SPANS.FLOW.SHOPPING_FLOW.ID,
           SPANS.UI.PRODUCT_DETAIL.ID,
           {
             'product.id': id,
@@ -48,7 +48,7 @@ const ProductDetailPage = () => {
           }
         );
         setIsLoading(true);
-        
+
         // If we have a shopping flow, set up activity tracking
         if (shoppingFlowExists) {
           activityTrackerRef.current = trackUserActivity(
@@ -60,7 +60,7 @@ const ProductDetailPage = () => {
               'interaction.type': 'product_detail_view'
             })
           );
-          
+
           activityTrackerRef.current.startTracking();
         }
 
@@ -73,78 +73,74 @@ const ProductDetailPage = () => {
           'GET'
         );
 
-        if (apiSpan) {
-          // Add event to mark the start of fetching
-          addSpanEvent(SPANS.API.FETCH_PRODUCT_DETAIL.ID, SPANS.EVENTS.API_CALL_INITIATED, {
-            'product.id': id,
-            'timestamp': Date.now()
-          });
+        // Add event to mark the start of fetching
+        addSpanEvent(SPANS.API.FETCH_PRODUCT_DETAIL.ID, SPANS.EVENTS.API_CALL_INITIATED, {
+          'product.id': id,
+          'timestamp': Date.now()
+        });
 
-          // Make the actual API call
-          const product = await fetchProduct(parseInt(id, 10), apiSpan);
+        // Make the actual API call
+        const product = await fetchProduct(parseInt(id, 10), apiSpan ?? undefined);
 
-          // Add event for successful product fetch
-          addSpanEvent(SPANS.API.FETCH_PRODUCT_DETAIL.ID, SPANS.EVENTS.API_CALL_COMPLETED, {
-            'product.id': id,
+        // Add event for successful product fetch
+        addSpanEvent(SPANS.API.FETCH_PRODUCT_DETAIL.ID, SPANS.EVENTS.API_CALL_COMPLETED, {
+          'product.id': id,
+          'product.title': product.title,
+          'timestamp': Date.now()
+        });
+
+        // End the API span
+        endSpan(SPANS.API.FETCH_PRODUCT_DETAIL.ID);
+
+        // Update the product state
+        setProduct(product);
+
+        addSpanEvent(SPANS.UI.PRODUCT_DETAIL.ID, 'updating the product state is complete', {
+          'ui.render.complete': Date.now()
+        });
+
+
+        setIsLoading(false);
+
+
+        addSpanEvent(SPANS.UI.PRODUCT_DETAIL.ID, 'RenderingComplete', {
+          'ui.render.complete': Date.now()
+        });
+
+
+        // If we have the ongoing shopping flow, add an event showing the product detail was viewed
+
+        addSpanEvent(SPANS.FLOW.SHOPPING_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
+          'product.id': product.id,
+          'product.title': product.title,
+          'view.timestamp': Date.now(),
+          'interaction.type': 'product_detail_viewed'
+        });
+
+        // Record action with activity tracker
+        if (activityTrackerRef.current) {
+          activityTrackerRef.current.recordAction('ViewProductDetail', {
+            'product.id': product.id,
             'product.title': product.title,
-            'timestamp': Date.now()
+            'product.price': product.userId * 9.99
           });
-
-          // End the API span
-          endSpan(SPANS.API.FETCH_PRODUCT_DETAIL.ID);
-
-          // Update the product state
-          setProduct(product);
-
-          if (uiSpan) {
-            addSpanEvent(SPANS.UI.PRODUCT_DETAIL.ID, 'updating the product state is complete', {
-              'ui.render.complete': Date.now()
-            });
-          }
-
-          setIsLoading(false);
-
-          // Mark UI rendering as complete
-          if (uiSpan) {
-            addSpanEvent(SPANS.UI.PRODUCT_DETAIL.ID, 'RenderingComplete', {
-              'ui.render.complete': Date.now()
-            });
-          }
-
-          // If we have the ongoing shopping flow, add an event showing the product detail was viewed
-          if (shoppingFlowExists) {
-            addSpanEvent(SPANS.FLOW.SHOPPING_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
-              'product.id': product.id,
-              'product.title': product.title,
-              'view.timestamp': Date.now(),
-              'interaction.type': 'product_detail_viewed'
-            });
-            
-            // Record action with activity tracker
-            if (activityTrackerRef.current) {
-              activityTrackerRef.current.recordAction('ViewProductDetail', {
-                'product.id': product.id,
-                'product.title': product.title,
-                'product.price': product.userId * 9.99
-              });
-            }
-          }
         }
+
+
       } catch (err) {
         setError('Failed to load product details. Please try again later.');
         setIsLoading(false);
 
-        // Record error in the API span if it exists
-        if (getSpan(SPANS.API.FETCH_PRODUCT_DETAIL.ID)) {
-          recordSpanError(SPANS.API.FETCH_PRODUCT_DETAIL.ID, 'Failed to fetch product detail');
-          endSpan(SPANS.API.FETCH_PRODUCT_DETAIL.ID);
-        }
+
+        recordSpanError(SPANS.API.FETCH_PRODUCT_DETAIL.ID, 'Failed to fetch product detail');
+        endSpan(SPANS.API.FETCH_PRODUCT_DETAIL.ID);
+
       }
     };
 
     // Execute the load product function
     loadProduct();
-    
+
     // Clean up when the component unmounts
     return () => {
       // Stop activity tracking
@@ -152,7 +148,7 @@ const ProductDetailPage = () => {
         console.info('Stopping activity tracking for productDetails on component unmount');
         activityTrackerRef.current.stopTracking();
       }
-      
+
       // End any open spans when component unmounts
       const spanIdsToEnd = [
         SPANS.API.FETCH_PRODUCT_DETAIL.ID,
@@ -160,7 +156,7 @@ const ProductDetailPage = () => {
         SPANS.INTERACTION.ADD_TO_CART.ID,
         SPANS.INTERACTION.UPDATE_QUANTITY.ID
       ];
-      
+
       // Check each span and end it if it exists
       spanIdsToEnd.forEach(id => {
         if (getSpan(id)) {
@@ -172,7 +168,7 @@ const ProductDetailPage = () => {
           endSpan(id);
         }
       });
-      
+
       // Only end the shopping flow span if we're not navigating to another page
       // that continues the flow
       const shoppingFlowSpan = getSpan(SPANS.FLOW.SHOPPING_FLOW.ID);
@@ -182,7 +178,7 @@ const ProductDetailPage = () => {
           'unmount.timestamp': Date.now(),
           'interaction.type': 'product_detail_unmounted'
         });
-        
+
         // We don't end the SHOPPING_FLOW_SPAN_ID here because it might continue
         // in other components - it should be ended when the user completes
         // the shopping flow or explicitly navigates away
@@ -202,7 +198,7 @@ const ProductDetailPage = () => {
         'product.quantity': newQuantity,
         'action.timestamp': Date.now()
       }
-    );  
+    );
     // Ensure quantity is at least 1
     const updatedQuantity = Math.max(1, newQuantity);
     setQuantity(updatedQuantity);
@@ -217,7 +213,7 @@ const ProductDetailPage = () => {
         'timestamp': Date.now(),
         'interaction.type': 'quantity_changed'
       });
-      
+
       // Record action with activity tracker
       if (activityTrackerRef.current) {
         activityTrackerRef.current.recordAction('QuantityChanged', {
@@ -234,7 +230,7 @@ const ProductDetailPage = () => {
   // Handle adding to cart - this will no longer end the shopping flow span
   const handleAddToCart = () => {
     if (!product) return;
-    
+
     // Record action with activity tracker
     if (activityTrackerRef.current) {
       activityTrackerRef.current.recordAction('AddToCartFromDetail', {
@@ -255,7 +251,7 @@ const ProductDetailPage = () => {
         'product.title': product.title,
         'action.timestamp': Date.now()
       }
-    );   
+    );
 
     // Pass the parent span ID to link the cart operation as a child span
     addToCart(product, quantity, SPANS.INTERACTION.ADD_TO_CART.ID);
@@ -286,16 +282,15 @@ const ProductDetailPage = () => {
         'navigation.type': 'back_button'
       });
     }
-    
+
     // Add event to the shopping flow if it exists
-    const shoppingFlowExists = getSpan(SPANS.FLOW.SHOPPING_FLOW.ID) !== undefined;
-    if (shoppingFlowExists) {
-      addSpanEvent(SPANS.FLOW.SHOPPING_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
-        'from.product.id': id,
-        'navigation.timestamp': Date.now(),
-        'interaction.type': 'back_to_product_list'
-      });
-    }
+
+    addSpanEvent(SPANS.FLOW.SHOPPING_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
+      'from.product.id': id,
+      'navigation.timestamp': Date.now(),
+      'interaction.type': 'back_to_product_list'
+    });
+
 
     // Use browser history to go back
     navigate(-1);

@@ -14,7 +14,7 @@ const CartPage = () => {
     startUiSpan,
     endSpan,
     addSpanEvent,
-    getSpan  } = useTracing();
+    getSpan } = useTracing();
 
 
   const activityTrackerRef = useRef<ReturnType<typeof trackUserActivity> | null>(null);
@@ -28,44 +28,44 @@ const CartPage = () => {
   // Start a span for the cart page when it mounts
   useEffect(() => {
     // Check if the shopping flow span from ProductListPage exists and end it
-      addSpanEvent(SPANS.FLOW.SHOPPING_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
-        'flow.end_page': 'CartPage',
-        'flow.end_timestamp': Date.now(),
-        'interaction.type': 'arrived_at_cart'
-      });
-      // End the shopping flow span when user navigates to cart
-      console.log('Ending shopping flow span after navigation to cart page');
-      endSpan(SPANS.FLOW.SHOPPING_FLOW.ID);
-    
-      // Explicitly flush any pending spans after ending a flow span
-      flushPendingSpans().catch(err => console.error('Error flushing spans:', err));
-    
-      startSpan(SPANS.FLOW.CHECKOUT_FLOW.NAME, SPANS.FLOW.CHECKOUT_FLOW.ID, {
-        'page.name': 'CartPage',
-        'cart.item_count': items.length,
-        'cart.total_quantity': items.reduce((sum, item) => sum + item.quantity, 0),
-        'cart.total_amount': totalPrice,
-        'cart.is_empty': items.length === 0,
-        'view.timestamp': Date.now()
-      }, true);
-      // Add additional context if span already exists
-      addSpanEvent(SPANS.FLOW.CHECKOUT_FLOW.ID, 'EffectRendered', {
-        'effect.timestamp': Date.now()
-      });
-    
-      startUiSpan(
-        SPANS.UI.SHOPPING_CART.NAME,
-        SPANS.FLOW.CHECKOUT_FLOW.ID,
-        SPANS.UI.SHOPPING_CART.ID,
-        {
-          'render.type': 'layout',
-          'render.timestamp': Date.now()
-        }
-      );
-      addSpanEvent(SPANS.UI.SHOPPING_CART.ID, 'EffectRendered', {
-        'effect.timestamp': Date.now()
-      });
-    
+    addSpanEvent(SPANS.FLOW.SHOPPING_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
+      'flow.end_page': 'CartPage',
+      'flow.end_timestamp': Date.now(),
+      'interaction.type': 'arrived_at_cart'
+    });
+    // End the shopping flow span when user navigates to cart
+    console.log('Ending shopping flow span after navigation to cart page');
+    endSpan(SPANS.FLOW.SHOPPING_FLOW.ID);
+
+    // Explicitly flush any pending spans after ending a flow span
+    flushPendingSpans().catch(err => console.error('Error flushing spans:', err));
+
+    startSpan(SPANS.FLOW.CHECKOUT_FLOW.NAME, SPANS.FLOW.CHECKOUT_FLOW.ID, {
+      'page.name': 'CartPage',
+      'cart.item_count': items.length,
+      'cart.total_quantity': items.reduce((sum, item) => sum + item.quantity, 0),
+      'cart.total_amount': totalPrice,
+      'cart.is_empty': items.length === 0,
+      'view.timestamp': Date.now()
+    }, true);
+    // Add additional context if span already exists
+    addSpanEvent(SPANS.FLOW.CHECKOUT_FLOW.ID, 'EffectRendered', {
+      'effect.timestamp': Date.now()
+    });
+
+    startUiSpan(
+      SPANS.UI.SHOPPING_CART.NAME,
+      SPANS.FLOW.CHECKOUT_FLOW.ID,
+      SPANS.UI.SHOPPING_CART.ID,
+      {
+        'render.type': 'layout',
+        'render.timestamp': Date.now()
+      }
+    );
+    addSpanEvent(SPANS.UI.SHOPPING_CART.ID, 'EffectRendered', {
+      'effect.timestamp': Date.now()
+    });
+
     // Set up activity tracking for the cart page
     activityTrackerRef.current = trackUserActivity(
       SPANS.FLOW.CHECKOUT_FLOW.ID,
@@ -188,19 +188,19 @@ const CartPage = () => {
     }
 
     // Add an event for navigation
-    if (getSpan(SPANS.FLOW.CHECKOUT_FLOW.ID)) {
-      addSpanEvent(SPANS.FLOW.CHECKOUT_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
-        'navigation.destination': '/',
-        'navigation.type': 'continue_shopping',
-        'cart.item_count': items.length,
-        'interaction.type': 'navigate_to_products',
-        'navigation.timestamp': Date.now()
-      });
-    }
+
+    addSpanEvent(SPANS.FLOW.CHECKOUT_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
+      'navigation.destination': '/',
+      'navigation.type': 'continue_shopping',
+      'cart.item_count': items.length,
+      'interaction.type': 'navigate_to_products',
+      'navigation.timestamp': Date.now()
+    });
+
 
     // End the checkout flow span
     endSpan(SPANS.FLOW.CHECKOUT_FLOW.ID);
-    
+
     // Flush the spans before navigation
     await flushPendingSpans();
 
@@ -221,20 +221,20 @@ const CartPage = () => {
     }
 
     // Add an event for navigation
-    if (getSpan(SPANS.FLOW.CHECKOUT_FLOW.ID)) {
-      addSpanEvent(SPANS.FLOW.CHECKOUT_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
-        'navigation.destination': '/checkout',
-        'navigation.type': 'proceed_to_checkout',
-        'cart.item_count': items.length,
-        'cart.total_amount': totalPrice,
-        'interaction.type': 'navigate_to_checkout',
-        'navigation.timestamp': Date.now()
-      });
-    }
+
+    addSpanEvent(SPANS.FLOW.CHECKOUT_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
+      'navigation.destination': '/checkout',
+      'navigation.type': 'proceed_to_checkout',
+      'cart.item_count': items.length,
+      'cart.total_amount': totalPrice,
+      'interaction.type': 'navigate_to_checkout',
+      'navigation.timestamp': Date.now()
+    });
+
 
     // We DON'T end the checkout flow span here because it continues 
     // through the checkout process - instead we pass it along
-    
+
     // Still flush any pending spans before navigation
     await flushPendingSpans();
 

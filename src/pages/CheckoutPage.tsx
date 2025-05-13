@@ -39,9 +39,6 @@ const CheckoutPage = () => {
 
   // Setup user activity tracker for this page
   useEffect(() => {
-    // Create a component ID to prevent duplicate spans
-    const componentId = `checkout-page-${Date.now()}`;
-
     // Start a new span for the checkout flow with componentId in attributes
     startSpan(SPANS.FLOW.CHECKOUT_FLOW.NAME, SPANS.FLOW.CHECKOUT_FLOW.ID, {
       'page.name': 'CheckoutPage',
@@ -164,13 +161,12 @@ const CheckoutPage = () => {
     }
 
     // Also add to main checkout flow for context
-    if (getSpan(SPANS.FLOW.CHECKOUT_FLOW.ID)) {
-      addSpanEvent(SPANS.FLOW.CHECKOUT_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
-        'form.field': name,
-        'form.field_length': value.length,
-        'ui.interaction': 'input_change'
-      });
-    }
+    addSpanEvent(SPANS.FLOW.CHECKOUT_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
+      'form.field': name,
+      'form.field_length': value.length,
+      'ui.interaction': 'input_change'
+    });
+
 
     setFormData(prev => ({
       ...prev,
@@ -211,16 +207,16 @@ const CheckoutPage = () => {
         setError(`Please fill in all required fields: ${emptyFields.join(', ')}`);
         setIsProcessing(false);
         // Restart form interaction span since we need to continue editing
-            // End the form interaction span as submission begins
-            if (getSpan(SPANS.CHECKOUT.FORM_INTERACTION.ID)) {
-              addSpanEvent(SPANS.CHECKOUT.FORM_INTERACTION.ID, 'FormInteraction', {
-                'interaction.type': 'form_input',
-                'form.fields_completed': Object.values(formData).filter(val => val.length > 0).length,
-                'form.total_fields': 9,
-                'form.validation_failed': true,
-                'interaction.start_time': Date.now()
-              });
-            }
+        // End the form interaction span as submission begins
+
+        addSpanEvent(SPANS.CHECKOUT.FORM_INTERACTION.ID, 'FormInteraction', {
+          'interaction.type': 'form_input',
+          'form.fields_completed': Object.values(formData).filter(val => val.length > 0).length,
+          'form.total_fields': 9,
+          'form.validation_failed': true,
+          'interaction.start_time': Date.now()
+        });
+
         return;
       }
 
@@ -245,60 +241,59 @@ const CheckoutPage = () => {
       );
 
       // Add payment steps as events with timestamps to prevent gaps
-      if (paymentSpan) {
-        // Card validation phase
-        addSpanEvent(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID, SPANS.EVENTS.USER_INTERACTION, {
-          'payment.step': 'card_verification',
-          'payment.timestamp': Date.now(),
-          'interaction.type': 'verify_card'
-        });
+      // Card validation phase
+      addSpanEvent(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID, SPANS.EVENTS.USER_INTERACTION, {
+        'payment.step': 'card_verification',
+        'payment.timestamp': Date.now(),
+        'interaction.type': 'verify_card'
+      });
 
-        // Simulate a short delay for card verification (with activity tracking during the delay)
-        const verificationStart = Date.now();
-        await new Promise(resolve => {
-          const checkProgress = () => {
-            const elapsed = Date.now() - verificationStart;
-            if (elapsed < 200) {
-              // Report progress during this step
-              recordSpanActivity(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID, 'verification_progress', {
-                'verification.progress': `${Math.round(elapsed / 2)}%`,
-                'verification.elapsed_ms': elapsed
-              });
-              requestAnimationFrame(checkProgress);
-            } else {
-              resolve(true);
-            }
-          };
-          requestAnimationFrame(checkProgress);
-        });
+      // Simulate a short delay for card verification (with activity tracking during the delay)
+      const verificationStart = Date.now();
+      await new Promise(resolve => {
+        const checkProgress = () => {
+          const elapsed = Date.now() - verificationStart;
+          if (elapsed < 200) {
+            // Report progress during this step
+            recordSpanActivity(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID, 'verification_progress', {
+              'verification.progress': `${Math.round(elapsed / 2)}%`,
+              'verification.elapsed_ms': elapsed
+            });
+            requestAnimationFrame(checkProgress);
+          } else {
+            resolve(true);
+          }
+        };
+        requestAnimationFrame(checkProgress);
+      });
 
-        // Payment processing phase
-        addSpanEvent(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID, SPANS.EVENTS.USER_INTERACTION, {
-          'verification.complete': true,
-          'payment.step': 'processing',
-          'payment.timestamp': Date.now(),
-          'interaction.type': 'process_payment'
-        });
+      // Payment processing phase
+      addSpanEvent(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID, SPANS.EVENTS.USER_INTERACTION, {
+        'verification.complete': true,
+        'payment.step': 'processing',
+        'payment.timestamp': Date.now(),
+        'interaction.type': 'process_payment'
+      });
 
-        // Wait a bit more before calling the API (with progress tracking)
-        const processingStart = Date.now();
-        await new Promise(resolve => {
-          const checkProgress = () => {
-            const elapsed = Date.now() - processingStart;
-            if (elapsed < 300) {
-              // Report progress during this step
-              recordSpanActivity(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID, 'payment_progress', {
-                'payment.progress': `${Math.round(elapsed / 3)}%`,
-                'payment.elapsed_ms': elapsed
-              });
-              requestAnimationFrame(checkProgress);
-            } else {
-              resolve(true);
-            }
-          };
-          requestAnimationFrame(checkProgress);
-        });
-      }
+      // Wait a bit more before calling the API (with progress tracking)
+      const processingStart = Date.now();
+      await new Promise(resolve => {
+        const checkProgress = () => {
+          const elapsed = Date.now() - processingStart;
+          if (elapsed < 300) {
+            // Report progress during this step
+            recordSpanActivity(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID, 'payment_progress', {
+              'payment.progress': `${Math.round(elapsed / 3)}%`,
+              'payment.elapsed_ms': elapsed
+            });
+            requestAnimationFrame(checkProgress);
+          } else {
+            resolve(true);
+          }
+        };
+        requestAnimationFrame(checkProgress);
+      });
+
 
       // Process order with API call - bridge from payment to API
       recordSpanActivity(SPANS.FLOW.CHECKOUT_FLOW.ID, 'payment_to_api_transition', {
@@ -310,10 +305,10 @@ const CheckoutPage = () => {
         'api.start_timestamp': Date.now()
       });
 
-        addSpanEvent(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID, 'PaymentApproved', {
-          'payment.result': 'approved',
-          'payment.completion_time': Date.now()
-        });
+      addSpanEvent(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID, 'PaymentApproved', {
+        'payment.result': 'approved',
+        'payment.completion_time': Date.now()
+      });
       endSpan(SPANS.CHECKOUT.PAYMENT_PROCESSING.ID);
       endSpan(SPANS.FLOW.CHECKOUT_FLOW.ID);
       // Stop activity tracking
@@ -347,69 +342,68 @@ const CheckoutPage = () => {
         'POST'
       );
 
-      if (apiSpan) {
-        // Add API context
-        addSpanEvent(SPANS.API.PROCESS_ORDER.ID, SPANS.EVENTS.API_CALL_INITIATED, {
-          'order.items_count': items.length,
-          'order.total_amount': totalPrice,
-          'request.timestamp': Date.now()
+      // Add API context
+      addSpanEvent(SPANS.API.PROCESS_ORDER.ID, SPANS.EVENTS.API_CALL_INITIATED, {
+        'order.items_count': items.length,
+        'order.total_amount': totalPrice,
+        'request.timestamp': Date.now()
+      });
+
+      // Track API progress to avoid gaps
+      const apiCallStart = Date.now();
+      const trackApiProgress = setInterval(() => {
+        recordSpanActivity(SPANS.API.PROCESS_ORDER.ID, 'api_in_progress', {
+          'api.elapsed_ms': Date.now() - apiCallStart
         });
+      }, 200);
 
-        // Track API progress to avoid gaps
-        const apiCallStart = Date.now();
-        const trackApiProgress = setInterval(() => {
-          recordSpanActivity(SPANS.API.PROCESS_ORDER.ID, 'api_in_progress', {
-            'api.elapsed_ms': Date.now() - apiCallStart
-          });
-        }, 200);
+      // Make the actual API call
+      const result = await placeOrder(items, formData.address);
 
-        // Make the actual API call
-        const result = await placeOrder(items, formData.address);
+      // Stop progress tracking
+      clearInterval(trackApiProgress);
 
-        // Stop progress tracking
-        clearInterval(trackApiProgress);
+      // Add API response data
+      addSpanEvent(SPANS.API.PROCESS_ORDER.ID, SPANS.EVENTS.API_CALL_COMPLETED, {
+        'order.id': result.orderId,
+        'order.success': result.success,
+        'response.timestamp': Date.now()
+      });
 
-        // Add API response data
-        addSpanEvent(SPANS.API.PROCESS_ORDER.ID, SPANS.EVENTS.API_CALL_COMPLETED, {
-          'order.id': result.orderId,
-          'order.success': result.success,
-          'response.timestamp': Date.now()
-        });
+      // End API span
+      endSpan(SPANS.API.PROCESS_ORDER.ID);
 
-        // End API span
-        endSpan(SPANS.API.PROCESS_ORDER.ID);
+      // Update checkout flow with order result
+      addSpanEvent(SPANS.FLOW.ORDER_FLOW.ID, 'OrderPlaced', {
+        'order.id': result.orderId,
+        'order.status': 'success',
+        'order.processing_stage': 'storage_update'
+      });
 
-        // Update checkout flow with order result
-        addSpanEvent(SPANS.FLOW.ORDER_FLOW.ID, 'OrderPlaced', {
-          'order.id': result.orderId,
-          'order.status': 'success',
-          'order.processing_stage': 'storage_update'
-        });
+      // Store order information for confirmation page
+      sessionStorage.setItem('orderId', result.orderId);
+      sessionStorage.setItem('orderTotal', totalPrice.toFixed(2));
 
-        // Store order information for confirmation page
-        sessionStorage.setItem('orderId', result.orderId);
-        sessionStorage.setItem('orderTotal', totalPrice.toFixed(2));
+      // Update span with cart cleanup event
+      addSpanEvent(SPANS.FLOW.ORDER_FLOW.ID, 'CartCleanup', {
+        'order.processing_stage': 'cart_cleanup',
+        'cart.cleared': true
+      });
 
-        // Update span with cart cleanup event
-        addSpanEvent(SPANS.FLOW.ORDER_FLOW.ID, 'CartCleanup', {
-          'order.processing_stage': 'cart_cleanup',
-          'cart.cleared': true
-        });
+      // Clear cart after successful order - pass the checkout flow span ID
+      clearCart(SPANS.FLOW.ORDER_FLOW.ID);
 
-        // Clear cart after successful order - pass the checkout flow span ID
-        clearCart(SPANS.FLOW.ORDER_FLOW.ID);
+      // Add navigation event
+      addSpanEvent(SPANS.FLOW.ORDER_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
+        'order.processing_stage': 'navigation',
+        'order.id': result.orderId,
+        'order.total': totalPrice,
+        'navigation.destination': '/order-confirmation',
+        'interaction.type': 'navigate_to_confirmation'
+      });
+      // Navigate to order confirmation page
+      navigate('/order-confirmation');
 
-        // Add navigation event
-        addSpanEvent(SPANS.FLOW.ORDER_FLOW.ID, SPANS.EVENTS.USER_INTERACTION, {
-          'order.processing_stage': 'navigation',
-          'order.id': result.orderId,
-          'order.total': totalPrice,
-          'navigation.destination': '/order-confirmation',
-          'interaction.type': 'navigate_to_confirmation'
-        });
-        // Navigate to order confirmation page
-        navigate('/order-confirmation');
-      }
     } catch (err) {
       // Handle error
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
