@@ -4,6 +4,7 @@ import { useCart } from '../contexts/CartContext';
 import { useTracing } from '../contexts/TracingContext';
 import { trackUserActivity } from '../telemetry/userActivity';
 import { SPANS } from '../telemetry/spanConstants';
+import { flushPendingSpans } from '../services/api';
 
 const CartPage = () => {
   const { items = [], removeFromCart, clearCart, totalItems = 0 } = useCart();
@@ -36,6 +37,9 @@ const CartPage = () => {
       console.log('Ending shopping flow span after navigation to cart page');
       endSpan(SPANS.FLOW.SHOPPING_FLOW.ID);
     
+      // Explicitly flush any pending spans after ending a flow span
+      flushPendingSpans().catch(err => console.error('Error flushing spans:', err));
+    
       startSpan(SPANS.FLOW.CHECKOUT_FLOW.NAME, SPANS.FLOW.CHECKOUT_FLOW.ID, {
         'page.name': 'CartPage',
         'cart.item_count': items.length,
@@ -43,7 +47,7 @@ const CartPage = () => {
         'cart.total_amount': totalPrice,
         'cart.is_empty': items.length === 0,
         'view.timestamp': Date.now()
-      });
+      }, true);
       // Add additional context if span already exists
       addSpanEvent(SPANS.FLOW.CHECKOUT_FLOW.ID, 'EffectRendered', {
         'effect.timestamp': Date.now()
@@ -173,7 +177,7 @@ const CartPage = () => {
   };
 
   // Handle continuing shopping (navigation back to product list)
-  const handleContinueShopping = () => {
+  const handleContinueShopping = async () => {
     // Record action with activity tracker
     if (activityTrackerRef.current) {
       activityTrackerRef.current.recordAction('ContinueShopping', {
@@ -194,13 +198,18 @@ const CartPage = () => {
       });
     }
 
+    // End the checkout flow span
+    endSpan(SPANS.FLOW.CHECKOUT_FLOW.ID);
+    
+    // Flush the spans before navigation
+    await flushPendingSpans();
+
     // Navigation to product list
     navigate('/');
-    endSpan(SPANS.FLOW.CHECKOUT_FLOW.ID);
   };
 
   // Handle proceeding to checkout
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     // Record action with activity tracker
     if (activityTrackerRef.current) {
       activityTrackerRef.current.recordAction('ProceedToCheckout', {
@@ -222,6 +231,12 @@ const CartPage = () => {
         'navigation.timestamp': Date.now()
       });
     }
+
+    // We DON'T end the checkout flow span here because it continues 
+    // through the checkout process - instead we pass it along
+    
+    // Still flush any pending spans before navigation
+    await flushPendingSpans();
 
     // Navigate to checkout
     navigate('/checkout');

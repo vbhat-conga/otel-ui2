@@ -1,7 +1,7 @@
 import { WebTracerProvider } from '@opentelemetry/sdk-trace-web';
 import { Resource } from '@opentelemetry/resources';
 import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
-import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { BatchSpanProcessor, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { ZoneContextManager } from '@opentelemetry/context-zone';
 import { context, trace, Span } from '@opentelemetry/api';
@@ -20,12 +20,25 @@ const provider = new WebTracerProvider({
 
 const exporter = new OTLPTraceExporter({ 
   url: 'http://localhost:4318/v1/traces',
+  headers: {}, // You can add custom headers here if needed
+  concurrencyLimit: 10, // Increase for better throughput
 });
 
+// Use a more aggressive BatchSpanProcessor configuration for business transaction spans
 provider.addSpanProcessor(new BatchSpanProcessor(exporter, {
-  scheduledDelayMillis: 1000, // Reduced to 500ms for more timely exports
-  maxExportBatchSize: 100,
+  // Reduce these values for more frequent export
+  scheduledDelayMillis: 500,  // Export every 500ms instead of 1000ms
+  maxExportBatchSize: 100,    // Keep batch size the same
+  exportTimeoutMillis: 30000, // Longer timeout to ensure export completes
+  maxQueueSize: 2048,         // Increase queue size to handle more spans
 }));
+
+// Also add SimpleSpanProcessor for critical spans to ensure they get exported immediately
+// This helps with important spans like checkout flow that need to be reliably captured
+const flowSpanExporter = new OTLPTraceExporter({ 
+  url: 'http://localhost:4318/v1/traces' 
+});
+provider.addSpanProcessor(new SimpleSpanProcessor(flowSpanExporter));
 
 // Register the zone context manager before registering auto-instrumentations
 provider.register({ contextManager: new ZoneContextManager() });
@@ -45,10 +58,24 @@ registerInstrumentations({
           }
         }
       },
-      // Disable other instrumentations to avoid interference with existing tracing
+      // Configure fetch and XHR instrumentation for API calls
+      '@opentelemetry/instrumentation-fetch': { 
+        enabled: true,
+        // Ensure proper propagation headers
+        propagateTraceHeaderCorsUrls: [
+          'http://localhost:5229/.*', // Backend API pattern
+          '.+' // All URLs (for testing - you can narrow this down)
+        ]
+      },
+      '@opentelemetry/instrumentation-xml-http-request': { 
+        enabled: true,
+        // Ensure proper propagation headers
+        propagateTraceHeaderCorsUrls: [
+          'http://localhost:5229/.*', // Backend API pattern
+          '.+' // All URLs (for testing - you can narrow this down)
+        ]
+      },
       '@opentelemetry/instrumentation-user-interaction': { enabled: false },
-      '@opentelemetry/instrumentation-fetch': { enabled: true },
-      '@opentelemetry/instrumentation-xml-http-request': { enabled: true },
     }),
   ],
   tracerProvider: provider,
@@ -60,19 +87,16 @@ export const tracer = trace.getTracer('e-commerce-ui');
 const spanRegistry = new Map<string, Span>();
 
 // Basic span operations
-export const startSpan = (name: string, spanId: string, attributes?: Record<string, any>): Span => {
+export const startSpan = (name: string, spanId: string, attributes?: Record<string, any>, isBusinesstransaction:boolean = false): Span => {
   const existingSpan = spanRegistry.get(spanId);
   if (existingSpan) {
     console.warn(`Span with ID ${spanId} already exists. so returning the same.`);
     return existingSpan;
   } 
-  const isFlowSpan = spanId === SPANS.FLOW.SHOPPING_FLOW.ID || 
-                     spanId === SPANS.FLOW.CHECKOUT_FLOW.ID || 
-                     spanId === SPANS.FLOW.ORDER_FLOW.ID;
-  
   let span: Span;
   
-  if (isFlowSpan) {
+  if (isBusinesstransaction) {
+    console.info(`Creating flow span: ${name} with ID ${spanId} as root span`);
     // For flow spans, create a new root context by starting a span without an explicit parent
     // This creates a new trace ID instead of linking to any existing trace
     span = tracer.startSpan(name, { root: true });
@@ -85,6 +109,10 @@ export const startSpan = (name: string, spanId: string, attributes?: Record<stri
   if (attributes) {
     span.setAttributes(attributes);
   }
+  
+  // Add standard attributes to all spans for better filtering in Grafana
+  span.setAttribute('app.name', 'e-commerce-ui');
+  span.setAttribute('span.id', spanId);
   
   spanRegistry.set(spanId, span);
   console.info(`Span started: ${name} with ID ${spanId}`);
@@ -117,9 +145,27 @@ export const endSpan = (spanId: string): boolean => {
     return false;
   }
   
+  // For specific business transaction spans, force flush to ensure export
+  const isFlowSpan = spanId === SPANS.FLOW.SHOPPING_FLOW.ID || 
+                    spanId === SPANS.FLOW.CHECKOUT_FLOW.ID || 
+                    spanId === SPANS.FLOW.ORDER_FLOW.ID;
+                    
+  // Add final timestamp for better analysis
+  span.setAttribute('span.end_time', Date.now());
+  
   span.end();
   spanRegistry.delete(spanId);
   console.info(`Span ended: ${spanId}`);
+  
+  // Force the provider to flush spans for business transactions
+  // This ensures they get sent to the collector immediately
+  if (isFlowSpan) {
+    console.info(`Forcing flush for business transaction span: ${spanId}`);
+    provider.forceFlush().catch(err => {
+      console.error(`Error flushing spans: ${err}`);
+    });
+  }
+  
   return true;
 };
 
@@ -175,7 +221,13 @@ export const addSpanEvent = (spanId: string, name: string, attributes?: Record<s
     return false;
   }
   
-  span.addEvent(name, attributes);
+  // Ensure each event has a timestamp for better tracing
+  const eventAttributes = {
+    'event.timestamp': Date.now(),
+    ...(attributes || {})
+  };
+  
+  span.addEvent(name, eventAttributes);
   return true;
 };
 
@@ -246,4 +298,5 @@ export const withSpan = async <T>(spanId: string, asyncFn: () => Promise<T>): Pr
   }
 };
 
+// Export the provider for potential global access
 export { provider };

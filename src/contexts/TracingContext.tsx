@@ -16,7 +16,7 @@ import {
 // Define the TracingContext interface
 interface TracingContextType {
   // Basic span operations
-  startSpan: (name: string, spanId: string, attributes?: Record<string, any>) => Span;
+  startSpan: (name: string, spanId: string, attributes?: Record<string, any>, isBusinesstransaction?: boolean ) => Span;
   startChildSpan: (name: string, parentSpanId: string, spanId: string, attributes?: Record<string, any>) => Span | null;
   endSpan: (spanId: string) => boolean;
   getSpan: (spanId: string) => Span | undefined;

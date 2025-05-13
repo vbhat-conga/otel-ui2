@@ -53,7 +53,6 @@ const ProductListPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { addToCart } = useCart();
-  const navigate = useNavigate();
   const { 
     startSpan,
     endSpan,
@@ -74,7 +73,7 @@ const ProductListPage = () => {
     startSpan(SPANS.FLOW.SHOPPING_FLOW.NAME, SPANS.FLOW.SHOPPING_FLOW.ID, {
       'flow.start_page': 'ProductList',
       'flow.timestamp': Date.now()
-    });
+    }, true);
         
     // Set up activity tracking for the product list page - use a callback to always get current products length
     activityTrackerRef.current = trackUserActivity(

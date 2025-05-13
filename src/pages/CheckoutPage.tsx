@@ -49,7 +49,7 @@ const CheckoutPage = () => {
       'cart.total_value': items.reduce((sum, item) => sum + item.userId * 9.99 * item.quantity, 0),
       'view.timestamp': Date.now(),
       //'componentId': componentId // Pass as an attribute instead of parameter
-    });
+    }, true);
 
     // Set up activity tracking for the checkout flow
     activityTrackerRef.current = trackUserActivity(
@@ -327,7 +327,7 @@ const CheckoutPage = () => {
         'cart.total_value': totalPrice,
         'payment.result': 'approved',
         'view.timestamp': Date.now()
-      });
+      }, true);
       activityTrackerRef.current = trackUserActivity(
         SPANS.FLOW.ORDER_FLOW.ID,
         30000,

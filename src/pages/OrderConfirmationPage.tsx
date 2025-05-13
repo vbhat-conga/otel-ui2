@@ -9,7 +9,6 @@ const OrderConfirmationPage = () => {
   const [orderId, setOrderId] = useState<string | null>(null);
   const [orderTotal, setOrderTotal] = useState<string | null>(null);
   const {
-    startSpan,
     startUiSpan,
     endSpan,
     addSpanEvent,
