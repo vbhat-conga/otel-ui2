@@ -1,20 +1,32 @@
 version: '3'
+
 services:
   # OpenTelemetry Collector
   otel-collector:
-    image: otel/opentelemetry-collector:0.96.0
+    image: otel/opentelemetry-collector-contrib:latest
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
     ports:
-      - "4318:4318"   # OTLP HTTP receiver
-      - "55679:55679" # zpages extension
+      - "4318:4318"   # OTLP HTTP
+      - "8888:8888"   # Prometheus metrics exposition
+      - "8889:8889"   # Prometheus exporter metrics
     depends_on:
       - tempo
+  # Tempo - distributed tracing backend
+  tempo:
+    image: grafana/tempo:latest
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml
+    ports:
+      - "3200:3200"   # Tempo UI
+      - "4317:4317"   # OTLP gRPC (mapped to different external port)
+      - "9411:9411"   # Zipkin
 
-  # Grafana
+  # Grafana - visualization
   grafana:
-    image: grafana/grafana:10.3.0
+    image: grafana/grafana:latest
     volumes:
       - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
     environment:
@@ -22,17 +34,6 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_DISABLE_LOGIN_FORM=true
     ports:
-      - "3001:3000"
+      - "3001:3000"   # Grafana UI (on port 3001 to avoid conflict with the React app)
     depends_on:
       - tempo
-
-  # Tempo (distributed tracing backend)
-  tempo:
-    image: grafana/tempo:2.3.0
-    command: [ "-config.file=/etc/tempo.yaml" ]
-    volumes:
-      - ./tempo.yaml:/etc/tempo.yaml
-    ports:
-      - "3200:3200"   # tempo
-      - "4317:4317"   # OTLP GRPC
-      - "4319:4318"   # OTLP HTTP 

@@ -24,6 +24,33 @@ The application is structured with the following components:
 - **User Activity Monitoring**: Automatic tracking of user interactions and session activity
 - **Form Interaction Tracking**: Detailed form completion metrics and validation events
 
+## Observability Architecture
+
+The observability architecture consists of the following components:
+
+```
++--------------------+     +----------------------+     +-------------------+
+|                    |     |                      |     |                   |
+|  React Application |---->| OpenTelemetry       |---->| Tempo             |
+|  (Browser)         |     | Collector           |     | (Trace Storage)   |
+|                    |     |                      |     |                   |
++--------------------+     +----------------------+     +-------------------+
+                                                             ^
+                                                             |
+                                                             v
+                                                        +-------------------+
+                                                        |                   |
+                                                        | Grafana           |
+                                                        | (Visualization)   |
+                                                        |                   |
+                                                        +-------------------+
+```
+
+- **React Application**: Sends traces via OpenTelemetry JavaScript SDK to the Collector
+- **OpenTelemetry Collector**: Receives, processes, and forwards traces to Tempo
+- **Tempo**: Stores and indexes traces for fast retrieval
+- **Grafana**: Provides visualization and exploration of traces from Tempo
+
 ## Running the Application
 
 1. Install dependencies:
@@ -50,14 +77,190 @@ We've provided a pre-configured setup using Docker Compose:
 docker-compose up -d
 ```
 
-This command starts:
-- **OpenTelemetry Collector**: Receives and processes telemetry data
-- **Tempo**: Stores and indexes distributed traces
-- **Grafana**: Web interface for visualizing traces
+This will start:
+- OpenTelemetry Collector on ports 4317 (gRPC) and 4318 (HTTP)
+- Tempo (distributed tracing backend) on port 3200
+- Grafana on port 3001
 
-Access the Grafana UI at [http://localhost:3001](http://localhost:3001)
+### Port Configuration
 
-The Tempo data source is pre-configured in Grafana, so you can immediately start exploring traces.
+- **OpenTelemetry Collector**:
+  - Port 4317: OTLP gRPC receiver
+  - Port 4318: OTLP HTTP receiver
+  - Port 8888: Prometheus metrics
+  - Port 8889: Prometheus exporter metrics
+
+- **Tempo**:
+  - Port 3200: Tempo UI
+  - Port 4319: OTLP gRPC (mapped from internal 4317)
+  - Port 9411: Zipkin compatible endpoint
+
+- **Grafana**:
+  - Port 3001: Web UI (mapped from internal 3000)
+
+### Accessing the Monitoring Stack
+
+- **Grafana UI**: [http://localhost:3001](http://localhost:3001)
+  - A pre-configured Tempo datasource is already set up
+  - You can explore traces by clicking on "Explore" in the left sidebar and selecting the "Tempo" datasource
+
+- **Tempo UI**: [http://localhost:3200](http://localhost:3200)
+  - Direct access to the Tempo query interface
+  
+### Data Flow
+
+1. The React application generates traces using the OpenTelemetry JavaScript SDK
+2. Traces are sent to the OpenTelemetry Collector on port 4318 (HTTP)
+3. The Collector processes and batches the traces
+4. The Collector forwards the traces to Tempo on port 4317
+5. Tempo stores the traces
+6. Grafana queries Tempo to display the traces
+
+### Viewing Traces
+
+1. Run the application with `npm run dev`
+2. Interact with the application to generate traces
+3. Open Grafana at [http://localhost:3001](http://localhost:3001)
+4. Navigate to "Explore" and select the "Tempo" datasource
+5. You can search for traces by:
+   - Service name: `e-commerce-ui`
+   - Span name
+   - Duration
+   - Custom attributes like `span.id` or `app.name`
+
+### Verification Steps
+
+To verify that your OpenTelemetry setup is working correctly:
+
+1. Start the Docker Compose stack:
+   ```bash
+   docker-compose up -d
+   ```
+
+2. Check that all services are running:
+   ```bash
+   docker-compose ps
+   ```
+
+3. Test CORS configuration:
+   ```bash
+   curl -X OPTIONS -H "Origin: http://localhost:3000" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: Content-Type,traceparent" http://localhost:4318/v1/traces -v
+   ```
+   
+   You should see HTTP 204 No Content with appropriate CORS headers in the response.
+
+4. Run the React application:
+   ```bash
+   npm run dev
+   ```
+
+5. Interact with the application by:
+   - Browsing products
+   - Adding items to cart
+   - Going through the checkout process
+
+6. Open Grafana at http://localhost:3001 and navigate to the Explore tab
+   - Select the Tempo data source
+   - Use "e-commerce-ui" as the service name
+   - Click "Run query"
+   - You should see traces from your application
+
+7. Examine the trace details to see the spans from your user interactions
+
+If you encounter any issues, check the troubleshooting section below.
+
+### Troubleshooting
+
+#### Common Issues and Solutions
+
+1. **CORS Issues with OpenTelemetry Collector**
+   - **Symptom**: React app fails to send traces with CORS errors in browser console
+   - **Solution**: Update the OTEL collector configuration with proper CORS settings:
+     ```yaml
+     receivers:
+       otlp:
+         protocols:
+           http:
+             endpoint: 0.0.0.0:4318
+             cors:
+               allowed_origins:
+                 - http://localhost:3000
+                 - http://localhost:3002
+               allowed_headers:
+                 - "*"
+     ```
+   - **Verification**: Test with a CORS preflight request:
+     ```bash
+     curl -X OPTIONS -H "Origin: http://localhost:3000" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: Content-Type,traceparent" http://localhost:4318/v1/traces -v
+     ```
+     You should see HTTP 204 with proper CORS headers in the response.
+
+2. **Port Conflicts**
+   - **Symptom**: Services fail to start or are unreachable
+   - **Solution**: Map services to different external ports, for example:
+     ```yaml
+     # In docker-compose.yml
+     tempo:
+       ports:
+         - "3200:3200"   # Tempo UI
+         - "4319:4317"   # OTLP gRPC (mapped to different external port)
+     ```
+   - **Verification**: Use `docker-compose ps` to check all port mappings
+
+3. **Connection Issues between Services**
+   - **Symptom**: Collector logs show connection errors to Tempo
+   - **Solution**: Ensure the collector is configured to use the correct service name and port:
+     ```yaml
+     exporters:
+       otlp:
+         endpoint: tempo:4317  # Use internal Docker service name
+         tls:
+           insecure: true
+     ```
+   - **Verification**: Check logs with `docker-compose logs otel-collector`
+
+4. **React App Not Sending Traces**
+   - **Symptom**: No traces appearing in Tempo
+   - **Solution**: Ensure proper exporter configuration in your React app:
+     ```typescript
+     const exporter = new OTLPTraceExporter({ 
+       url: 'http://localhost:4318/v1/traces',
+       headers: {
+         'Content-Type': 'application/json',
+       }
+     });
+     ```
+   - **Verification**: Check browser network tab for requests to `/v1/traces`
+
+#### Diagnostic Commands
+
+Check service status:
+```bash
+docker-compose ps
+```
+
+Test the OTEL Collector endpoint:
+```bash
+curl -v http://localhost:4318/v1/traces
+```
+
+Send a test trace to the collector:
+```bash
+curl -X POST -H "Content-Type: application/json" -H "Origin: http://localhost:3000" http://localhost:4318/v1/traces -d '{"resourceSpans": []}' -v
+```
+
+Check individual service logs:
+```bash
+docker-compose logs otel-collector
+docker-compose logs tempo
+docker-compose logs grafana
+```
+
+Restart the observability stack:
+```bash
+docker-compose down
+docker-compose up -d
+```
 
 ## API Tracing with Distributed Context Propagation
 
@@ -382,3 +585,215 @@ With this implementation, you can identify:
 
 This application uses JSONPlaceholder as a mock data source:
 - https://jsonplaceholder.typicode.com
+
+## Creating Custom Dashboards in Grafana
+
+You can create custom dashboards in Grafana to better visualize your application's telemetry data:
+
+1. Open Grafana at http://localhost:3001
+2. Click on "Dashboards" in the left sidebar
+3. Click "New" and select "New Dashboard"
+4. Click "Add visualization"
+5. Select the "Tempo" data source
+6. Use the query builder to define your query:
+   - Select "Search" tab
+   - Filter by service name: `e-commerce-ui`
+   - Add additional filters as needed (e.g., `span.name`, `app.name`)
+   - Set appropriate time range
+
+### Example Dashboard Panels
+
+Here are some useful panels to add to your dashboard:
+
+1. **Business Transaction Overview**
+   - Query: `{service.name="e-commerce-ui", app.name="shopping-flow"}`
+   - Visualization: Table
+   - Shows all shopping flow transactions
+
+2. **Checkout Performance**
+   - Query: `{service.name="e-commerce-ui", app.name="checkout-flow"}`
+   - Visualization: Line graph of duration
+   - Shows checkout performance over time
+
+3. **API Call Latency**
+   - Query: `{service.name="e-commerce-ui", span.name=~"API.*"}`
+   - Visualization: Bar chart
+   - Shows latency of different API calls
+
+4. **User Interaction Events**
+   - Query: `{service.name="e-commerce-ui", span.kind="internal", span.name=~"user.*"}`
+   - Visualization: Time series
+   - Shows user interaction events over time
+
+Save your dashboard and consider setting up automatic refresh to see new data as it comes in.
+
+## Next Steps
+
+Consider these enhancements to further improve your observability setup:
+
+1. Add metrics collection using Prometheus
+2. Implement logging with OpenTelemetry and send logs to Loki
+3. Create a combined dashboard with traces, metrics, and logs
+4. Set up alerts for slow transactions or errors
+5. Implement distributed tracing across your microservices architecture
+
+For more information on OpenTelemetry and its capabilities, visit the [OpenTelemetry documentation](https://opentelemetry.io/docs/).
+
+## Configuration Files Overview
+
+This project uses several configuration files for the OpenTelemetry observability stack:
+
+### 1. `otel-collector-config.yaml`
+
+This file configures the OpenTelemetry Collector, which receives traces from the React application and forwards them to Tempo.
+
+Key sections:
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - http://localhost:3000
+            - http://localhost:3002
+          allowed_headers:
+            - "*"
+```
+
+```yaml
+exporters:
+  debug:
+    verbosity: detailed
+  otlp:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+```
+
+```yaml
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp, debug]
+```
+
+### 2. `tempo.yaml`
+
+Configures the Tempo distributed tracing backend, which stores and indexes the traces.
+
+### 3. `grafana-datasources.yaml`
+
+Pre-configures Grafana with the Tempo data source, allowing you to immediately query and visualize traces.
+
+### 4. `docker-compose.yml`
+
+Defines the services, port mappings, and container configurations for the entire observability stack.
+
+Important port mappings:
+```yaml
+otel-collector:
+  ports:
+    - "4317:4317"   # OTLP gRPC
+    - "4318:4318"   # OTLP HTTP
+    - "8888:8888"   # Prometheus metrics
+
+tempo:
+  ports:
+    - "3200:3200"   # Tempo UI
+    - "4319:4317"   # OTLP gRPC (mapped to different external port)
+    - "9411:9411"   # Zipkin
+
+grafana:
+  ports:
+    - "3001:3000"   # Grafana UI (on port 3001 to avoid conflict with the React app)
+```
+
+### 5. `src/telemetry/tracing.ts`
+
+Configures the OpenTelemetry SDK in the React application:
+
+```typescript
+// Configure the exporter to send traces to the collector
+const exporter = new OTLPTraceExporter({ 
+  url: 'http://localhost:4318/v1/traces',
+  headers: {
+    'Content-Type': 'application/json',
+  }
+});
+
+// Configure the trace provider
+provider.addSpanProcessor(new BatchSpanProcessor(exporter, {
+  scheduledDelayMillis: 500,
+  maxExportBatchSize: 100,
+  exportTimeoutMillis: 30000,
+  maxQueueSize: 2048,
+}));
+```
+
+## CORS Configuration for OpenTelemetry
+
+One of the most common issues when setting up OpenTelemetry in a browser environment is properly configuring CORS (Cross-Origin Resource Sharing). This is necessary because the browser's JavaScript code needs to send trace data to the OpenTelemetry Collector, which is running on a different origin.
+
+### How We Fixed CORS Issues
+
+1. **Enable CORS in the OpenTelemetry Collector**
+
+   We modified the `otel-collector-config.yaml` file to properly configure CORS:
+   
+   ```yaml
+   receivers:
+     otlp:
+       protocols:
+         http:
+           endpoint: 0.0.0.0:4318
+           cors:
+             allowed_origins:
+               - http://localhost:3000
+               - http://localhost:3002
+             allowed_headers:
+               - "*"
+   ```
+
+   Key CORS settings:
+   - `allowed_origins`: Lists the origins that are allowed to make cross-origin requests to the collector
+   - `allowed_headers`: Configures which headers can be used in the actual request
+
+2. **Testing CORS Configuration**
+
+   We verified the CORS configuration using a preflight request:
+   
+   ```bash
+   curl -X OPTIONS -H "Origin: http://localhost:3000" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: Content-Type,traceparent" http://localhost:4318/v1/traces -v
+   ```
+   
+   A successful response should include:
+   ```
+   HTTP/1.1 204 No Content
+   Access-Control-Allow-Origin: http://localhost:3000
+   Access-Control-Allow-Headers: Content-Type,traceparent
+   ```
+
+3. **Configure the Trace Exporter in React**
+
+   We updated the trace exporter in the React application to include the proper Content-Type header:
+   
+   ```typescript
+   const exporter = new OTLPTraceExporter({ 
+     url: 'http://localhost:4318/v1/traces',
+     headers: {
+       'Content-Type': 'application/json',
+     }
+   });
+   ```
+
+### Common CORS Error Messages
+
+If you see any of these errors in your browser console, you may have CORS configuration issues:
+
+- `Access to fetch at 'http://localhost:4318/v1/traces' from origin 'http://localhost:3000' has been blocked by CORS policy`
+- `No 'Access-Control-Allow-Origin' header is present on the requested resource`
+- `Request header field Content-Type is not allowed by Access-Control-Allow-Headers`
