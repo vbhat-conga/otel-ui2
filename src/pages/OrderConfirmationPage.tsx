@@ -22,6 +22,18 @@ const OrderConfirmationPage = () => {
   // Start a confirmation flow span when the component mounts
   useEffect(() => {
 
+          // Set up activity tracking for this page
+          activityTrackerRef.current = trackUserActivity(
+            SPANS.FLOW.ORDER_FLOW.ID,
+            30000,
+            () => ({
+              'page.name': 'OrderConfirmationPage',
+              'order.id': orderId || 'unknown',
+            })
+          );
+          
+
+    activityTrackerRef.current.startTracking();
     // Start a new span for the confirmation flow
     startUiSpan(SPANS.UI.ORDER_CONFIRMATION.NAME,
       SPANS.FLOW.ORDER_FLOW.ID,
@@ -29,20 +41,7 @@ const OrderConfirmationPage = () => {
       {
         'page.name': 'OrderConfirmationPage',
         'view.timestamp': Date.now()
-      });
-
-      // Set up activity tracking for this page
-      activityTrackerRef.current = trackUserActivity(
-        SPANS.FLOW.ORDER_FLOW.ID,
-        30000,
-        () => ({
-          'page.name': 'OrderConfirmationPage',
-          'order.id': orderId || 'unknown',
-        })
-      );
-
-      activityTrackerRef.current.startTracking();
-    
+      });    
 
     // Create a UI span for order processing - only if not already active
 
@@ -76,7 +75,8 @@ const OrderConfirmationPage = () => {
         'processing.status': 'success'
       });
 
-    } else {
+    } 
+    else {
       // Handle missing data error
       addSpanEvent(SPANS.UI.ORDER_CONFIRMATION.ID, 'OrderDataError', {
         'error.type': 'missing_order_data',
@@ -101,7 +101,8 @@ const OrderConfirmationPage = () => {
       // Navigate to home page if order data is missing
       navigate('/');
     }
-
+    endSpan(SPANS.UI.ORDER_CONFIRMATION.ID);
+    endSpan(SPANS.FLOW.ORDER_FLOW.ID);
     // Clean up when component unmounts
     return () => {
       // Stop activity tracking
@@ -127,7 +128,7 @@ const OrderConfirmationPage = () => {
         endSpan(SPANS.FLOW.ORDER_FLOW.ID);
       }
     };
-  }, [orderId]);
+  }, []);
 
   // Handle continuing shopping after order completion
   const handleContinueShopping = () => {
